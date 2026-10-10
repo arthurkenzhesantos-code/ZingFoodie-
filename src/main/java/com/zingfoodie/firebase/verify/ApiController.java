@@ -153,4 +153,145 @@ public class ApiController {
             );
         }
     }
+    
+private FirebaseToken verifyCampusToken(Map<String, Object> body) {
+    String idToken = str(body, "idToken");
+
+    if (idToken.isBlank()) {
+        throw new ResponseStatusException(
+            HttpStatus.BAD_REQUEST, "Firebase ID token is required."
+        );
+    }
+
+    if (FirebaseApp.getApps().isEmpty()) {
+        throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "Firebase is not configured."
+        );
+    }
+
+    try {
+        FirebaseToken token =
+            FirebaseAuth.getInstance().verifyIdToken(idToken);
+
+        Object claimEmail = token.getClaims().get("email");
+
+        if (claimEmail == null ||
+            String.valueOf(claimEmail).isBlank()) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Your Firebase account must have an email address."
+            );
+        }
+
+        return token;
+    } catch (com.google.firebase.auth.FirebaseAuthException e) {
+        throw new ResponseStatusException(
+            HttpStatus.UNAUTHORIZED,
+            "Your login session is invalid or expired."
+        );
+    }
+}
+
+@PostMapping("/firebase/register")
+public Map<String, Object> registerFirebase(
+        @RequestBody Map<String, Object> body,
+        HttpSession session) {
+
+    FirebaseToken token = verifyCampusToken(body);
+
+    String email = String.valueOf(
+        token.getClaims().get("email")
+    ).trim().toLowerCase(Locale.ROOT);
+
+    String name = str(body, "fullName");
+    String campus = str(body, "campus");
+    String role = str(body, "role").toUpperCase(Locale.ROOT);
+
+    if (name.length() < 2 || campus.isBlank()) {
+        throw new ResponseStatusException(
+            HttpStatus.BAD_REQUEST,
+            "Enter your full name and campus."
+        );
+    }
+
+    if (!Set.of("STUDENT", "TEACHER", "FACULTY").contains(role)) {
+        throw new ResponseStatusException(
+            HttpStatus.BAD_REQUEST,
+            "Choose a valid campus account type."
+        );
+    }
+
+    Integer exists = db.queryForObject(
+        "SELECT COUNT(*) FROM users WHERE lower(username)=?",
+        Integer.class, email
+    );
+
+    if (exists != null && exists > 0) {
+        throw new ResponseStatusException(
+            HttpStatus.CONFLICT,
+            "An account with this email is already registered. Please log in."
+        );
+    }
+
+    // Firebase manages the campus account password.
+    // A random local password hash prevents this account from
+    // being usable through the ordinary username/password login.
+    db.update(
+        "INSERT INTO users(username,full_name,role,password_hash,campus,created_at) " +
+        "VALUES(?,?,?,?,?,?)",
+        email, name, role,
+        hashPassword(UUID.randomUUID().toString()),
+        campus, LocalDateTime.now().toString()
+    );
+
+    Map<String, Object> user = db.queryForMap(
+        "SELECT id,username,full_name AS name,role,campus " +
+        "FROM users WHERE lower(username)=?",
+        email
+    );
+
+    session.setAttribute("user", user);
+
+    return Map.of("user", publicUser(user));
+}
+
+@PostMapping("/firebase/login")
+public Map<String, Object> loginFirebase(
+        @RequestBody Map<String, Object> body,
+        HttpSession session) {
+
+    FirebaseToken token = verifyCampusToken(body);
+
+    String email = String.valueOf(
+        token.getClaims().get("email")
+    ).trim().toLowerCase(Locale.ROOT);
+
+    List<Map<String, Object>> rows = db.queryForList(
+        "SELECT id,username,full_name AS name,role,campus " +
+        "FROM users WHERE lower(username)=?",
+        email
+    );
+
+    if (rows.isEmpty()) {
+        throw new ResponseStatusException(
+            HttpStatus.NOT_FOUND,
+            "No ZingFoodie profile is linked to this email. Please register first."
+        );
+    }
+
+    Map<String, Object> user = rows.get(0);
+
+    if (!Set.of("STUDENT", "TEACHER", "FACULTY")
+            .contains(String.valueOf(user.get("role")))) {
+        throw new ResponseStatusException(
+            HttpStatus.FORBIDDEN,
+            "Use the separate Staff Login option for staff accounts."
+        );
+    }
+
+    session.setAttribute("user", user);
+
+    return Map.of("user", publicUser(user));
+}
 }
