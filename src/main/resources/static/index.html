@@ -95,4 +95,71 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeProfile()});
 // Restore basic profile details within the current browser session.
 ['studentName','campus'].forEach(id=>{const el=document.getElementById(id);el.addEventListener('input',updateCounts)});renderProducts();updateCounts();renderCart();
 (async()=>{try{const sess=await api('/session');currentUser=sess.user||null;updateAuthUI();if(currentUser?.role==='STAFF'){showView('staff')}else{showView('menu')}}catch(e){console.warn('Could not check login session',e);updateAuthUI()}})();
-</script></body></html>
+</script>
+<script type="module">
+import { initializeApp } from
+  "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAn6t8F2NrLfl-dGjaFG9LTtJW4rp9tekw",
+  authDomain: "zingfoodie-18e4e.firebaseapp.com",
+  projectId: "zingfoodie-18e4e",
+  storageBucket: "zingfoodie-18e4e.firebasestorage.app",
+  messagingSenderId: "347324445061",
+  appId: "1:347324445061:web:beb71ec46aaf3af88b14ec",
+  measurementId: "G-XKHZEMX16K"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+async function postFirebaseSession(endpoint, idToken, profile = {}) {
+  const response = await fetch("/api/firebase/" + endpoint, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, ...profile })
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || data.error ||
+      "Unable to complete your account request."
+    );
+  }
+
+  return data;
+}
+
+window.zingFirebaseRegister = async function(email, password, profile) {
+  const credential = await createUserWithEmailAndPassword(
+    auth, email, password
+  );
+
+  try {
+    const idToken = await credential.user.getIdToken(true);
+    return await postFirebaseSession("register", idToken, profile);
+  } catch (error) {
+    throw error;
+  }
+};
+
+window.zingFirebaseLogin = async function(email, password) {
+  const credential = await signInWithEmailAndPassword(
+    auth, email, password
+  );
+
+  const idToken = await credential.user.getIdToken(true);
+  return await postFirebaseSession("login", idToken);
+};
+</script>
+</body>
+</html></body></html>
