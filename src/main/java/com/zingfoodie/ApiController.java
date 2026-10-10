@@ -1,5 +1,9 @@
 package com.zingfoodie;
 
+
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseToken;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.client.j2se.MatrixToImageWriter;
 import com.google.zxing.common.BitMatrix;
@@ -99,4 +103,54 @@ public class ApiController {
     @PatchMapping("/staff/products/{id}/stock") public Map<String,Object> stock(@PathVariable int id,@RequestBody Map<String,Object> b,HttpSession s){requireStaff(s);int stock=(int)num(b,"stock");if(stock<0||num(b,"stock")!=stock)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Stock must be a non-negative whole number.");int n=db.update("UPDATE products SET stock=? WHERE id=?",stock,id);if(n==0)throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Product not found.");return db.queryForMap("SELECT id,name,category,vendor,price,stock,emoji,description AS `desc`,prep FROM products WHERE id=?",id);}
     @GetMapping("/staff/report") public Map<String,Object> report(HttpSession s){requireStaff(s);Map<String,Object> summary=db.queryForMap("SELECT COUNT(*) AS orders,COALESCE(SUM(CASE WHEN status!='CANCELLED' THEN subtotal ELSE 0 END),0) AS gross FROM orders");summary.put("itemsSold",db.queryForObject("SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.status!='CANCELLED'",Integer.class));summary.put("byProduct",db.queryForList("SELECT oi.product_name AS name,SUM(oi.quantity) AS qty,SUM(oi.price*oi.quantity) AS sales FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.status!='CANCELLED' GROUP BY oi.product_id ORDER BY sales DESC"));return summary;}
     private String str(Map<String,Object>b,String k){Object v=b.get(k);return v==null?"":String.valueOf(v).trim();}private double num(Map<String,Object>b,String k){Object v=b.get(k);try{return v instanceof Number n?n.doubleValue():Double.parseDouble(String.valueOf(v));}catch(Exception e){return -1;}}
+
+    @PostMapping("/firebase/verify")
+    public Map<String, Object> verifyFirebaseToken(
+            @RequestBody Map<String, Object> body) {
+
+        String idToken = str(body, "idToken");
+
+        if (idToken.isBlank()) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Firebase ID token is required."
+            );
+        }
+
+        if (FirebaseApp.getApps().isEmpty()) {
+            throw new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "Firebase is not configured."
+            );
+        }
+
+        try {
+            FirebaseToken verified =
+                FirebaseAuth.getInstance().verifyIdToken(idToken);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("authenticated", true);
+            result.put("uid", verified.getUid());
+
+            Object email = verified.getClaims().get("email");
+            if (email != null) {
+                result.put("email", email);
+            }
+
+            result.put(
+                "emailVerified",
+                Boolean.TRUE.equals(
+                    verified.getClaims().get("email_verified")
+                )
+            );
+
+            return result;
+
+        } catch (com.google.firebase.auth.FirebaseAuthException e) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Firebase ID token is invalid or expired."
+            );
+        }
+    }
 }
